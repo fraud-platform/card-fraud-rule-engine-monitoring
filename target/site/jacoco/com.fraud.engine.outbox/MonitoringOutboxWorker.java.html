@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MonitoringOutboxWorker.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">Card Fraud Rule Engine</a> &gt; <a href="index.source.html" class="el_package">com.fraud.engine.outbox</a> &gt; <span class="el_source">MonitoringOutboxWorker.java</span></div><h1>MonitoringOutboxWorker.java</h1><pre class="source lang-java linenums">package com.fraud.engine.outbox;
+
+import com.fraud.engine.domain.Decision;
+import com.fraud.engine.domain.Ruleset;
+import com.fraud.engine.domain.TransactionContext;
+import com.fraud.engine.engine.RuleEvaluator;
+import com.fraud.engine.kafka.DecisionPublisher;
+import com.fraud.engine.ruleset.RulesetRegistry;
+import com.fraud.engine.util.RulesetKeyResolver;
+import com.fraud.engine.velocity.VelocityService;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import jakarta.enterprise.context.ApplicationScoped;
+import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
+import org.jboss.logging.Logger;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Worker that drains Redis Streams outbox, runs MONITORING evaluation,
+ * and publishes auth + monitoring decisions to Kafka.
+ */
+@ApplicationScoped
+<span class="fc" id="L29">public class MonitoringOutboxWorker {</span>
+
+<span class="fc" id="L31">    private static final Logger LOG = Logger.getLogger(MonitoringOutboxWorker.class);</span>
+
+    @ConfigProperty(name = &quot;app.outbox.worker.enabled&quot;, defaultValue = &quot;false&quot;)
+    boolean workerEnabled;
+
+    @ConfigProperty(name = &quot;app.outbox.pending-claim-min-idle-ms&quot;, defaultValue = &quot;60000&quot;)
+    long pendingMinIdleMs;
+
+    @ConfigProperty(name = &quot;app.outbox.pending-claim-count&quot;, defaultValue = &quot;50&quot;)
+    int pendingClaimCount;
+
+<span class="fc" id="L42">    private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(</span>
+<span class="pc" id="L43">            r -&gt; new Thread(r, &quot;outbox-monitoring-worker&quot;));</span>
+
+    @Inject
+    OutboxFacade outboxClient;
+
+    @Inject
+    RulesetRegistry rulesetRegistry;
+
+    @Inject
+    RuleEvaluator ruleEvaluator;
+
+    @Inject
+    DecisionPublisher decisionPublisher;
+
+    @Inject
+    RulesetKeyResolver rulesetKeyResolver;
+
+    @Inject
+    VelocityService velocityService;
+
+    @PostConstruct
+    void start() {
+<span class="nc bnc" id="L65" title="All 2 branches missed.">        if (workerEnabled) {</span>
+<span class="nc" id="L66">            scheduler.scheduleWithFixedDelay(this::safePoll, 100, 100, TimeUnit.MILLISECONDS);</span>
+        }
+<span class="nc" id="L68">    }</span>
+
+    @PreDestroy
+    void stop() {
+<span class="nc" id="L72">        scheduler.shutdownNow();</span>
+<span class="nc" id="L73">    }</span>
+
+    private void safePoll() {
+        try {
+<span class="nc" id="L77">            poll();</span>
+<span class="nc" id="L78">        } catch (Exception e) {</span>
+<span class="nc" id="L79">            LOG.errorf(e, &quot;Monitoring outbox worker poll failed&quot;);</span>
+        }
+<span class="nc" id="L81">    }</span>
+
+    void poll() {
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        if (!workerEnabled) {</span>
+<span class="fc" id="L85">            return;</span>
+        }
+<span class="nc" id="L87">        List&lt;OutboxEntry&gt; reclaimed = outboxClient.claimPendingBatch(pendingMinIdleMs, pendingClaimCount);</span>
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        for (OutboxEntry entry : reclaimed) {</span>
+<span class="nc" id="L89">            processEntry(entry);</span>
+        }
+<span class="nc" id="L91">        List&lt;OutboxEntry&gt; entries = outboxClient.readBatch();</span>
+<span class="nc bnc" id="L92" title="All 2 branches missed.">        for (OutboxEntry entry : entries) {</span>
+<span class="nc" id="L93">            processEntry(entry);</span>
+        }
+<span class="nc" id="L95">    }</span>
+
+    void processEntry(OutboxEntry entry) {
+<span class="fc" id="L98">        OutboxEvent event = entry.getEvent();</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (event == null) {</span>
+<span class="fc" id="L100">            LOG.warn(&quot;Outbox entry missing payload, acking&quot;);</span>
+<span class="fc" id="L101">            outboxClient.ack(entry.getId());</span>
+<span class="fc" id="L102">            return;</span>
+        }
+
+<span class="fc" id="L105">        TransactionContext tx = event.getTransaction();</span>
+<span class="fc" id="L106">        Decision authDecision = event.getAuthDecision();</span>
+<span class="pc bpc" id="L107" title="1 of 4 branches missed.">        if (tx == null || authDecision == null) {</span>
+<span class="fc" id="L108">            LOG.warn(&quot;Outbox event missing transaction or auth decision, acking&quot;);</span>
+<span class="fc" id="L109">            outboxClient.ack(entry.getId());</span>
+<span class="fc" id="L110">            return;</span>
+        }
+
+        try {
+            // Capture velocity snapshot on worker thread (ADR-0017)
+<span class="fc" id="L115">            captureVelocitySnapshot(tx, authDecision);</span>
+
+            // Populate transactionContext for Kafka event (moved from AUTH hot path to background worker)
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">            if (authDecision.getTransactionContext() == null) {</span>
+<span class="nc" id="L119">                authDecision.setTransactionContext(tx.toEvaluationContext());</span>
+            }
+
+            // Publish AUTH decision first (as before)
+<span class="fc" id="L123">            decisionPublisher.publishDecisionAwait(authDecision);</span>
+
+            // Prepare MONITORING evaluation (ADR-0016: country-aware lookup)
+<span class="fc" id="L126">            tx.setDecision(authDecision.getDecision());</span>
+<span class="fc" id="L127">            String rulesetKey = rulesetKeyResolver.resolve(tx, RuleEvaluator.EVAL_MONITORING);</span>
+<span class="fc" id="L128">            String country = tx.getCountryCode();</span>
+<span class="fc" id="L129">            Ruleset ruleset = rulesetRegistry.getRulesetWithFallback(country, rulesetKey);</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">            Decision monitoringDecision = ruleset != null</span>
+<span class="fc" id="L131">                    ? ruleEvaluator.evaluate(tx, ruleset)</span>
+<span class="fc" id="L132">                    : buildFailOpenDecision(tx, rulesetKey);</span>
+
+            // Share velocity snapshot with MONITORING decision
+<span class="pc bpc" id="L135" title="1 of 2 branches missed.">            if (authDecision.getVelocitySnapshot() != null) {</span>
+<span class="fc" id="L136">                monitoringDecision.setVelocitySnapshot(authDecision.getVelocitySnapshot());</span>
+            }
+
+<span class="fc" id="L139">            decisionPublisher.publishDecisionAwait(monitoringDecision);</span>
+
+<span class="fc" id="L141">            outboxClient.ack(entry.getId());</span>
+<span class="fc" id="L142">        } catch (Exception e) {</span>
+<span class="fc" id="L143">            LOG.errorf(e, &quot;Failed to process outbox entry %s&quot;, entry.getId());</span>
+            // Do not ack; entry will be retried.
+        }
+<span class="fc" id="L146">    }</span>
+
+    private void captureVelocitySnapshot(TransactionContext tx, Decision authDecision) {
+        try {
+<span class="fc" id="L150">            Map&lt;String, Decision.VelocityResult&gt; snapshot = velocityService.captureVelocitySnapshot(tx);</span>
+<span class="fc" id="L151">            authDecision.setVelocitySnapshot(snapshot);</span>
+<span class="pc" id="L152">        } catch (Exception ex) {</span>
+<span class="nc" id="L153">            LOG.warnf(ex, &quot;Failed to capture velocity snapshot for %s&quot;, tx.getTransactionId());</span>
+        }
+<span class="fc" id="L155">    }</span>
+
+    private Decision buildFailOpenDecision(TransactionContext tx, String rulesetKey) {
+<span class="fc" id="L158">        Decision decision = new Decision(tx.getTransactionId(), RuleEvaluator.EVAL_MONITORING);</span>
+<span class="pc bpc" id="L159" title="1 of 2 branches missed.">        decision.setDecision(tx.getDecision() != null ? tx.getDecision() : Decision.DECISION_APPROVE);</span>
+<span class="fc" id="L160">        decision.setEngineMode(Decision.MODE_DEGRADED);</span>
+<span class="fc" id="L161">        decision.setEngineErrorCode(&quot;RULESET_NOT_LOADED&quot;);</span>
+<span class="fc" id="L162">        decision.setEngineErrorMessage(&quot;Ruleset not loaded in registry: &quot; + rulesetKey);</span>
+<span class="fc" id="L163">        decision.setRulesetKey(rulesetKey);</span>
+<span class="fc" id="L164">        decision.setTransactionContext(tx.toEvaluationContext());</span>
+<span class="fc" id="L165">        return decision;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.14.202510111229</span></div></body></html>
