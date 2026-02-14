@@ -64,7 +64,7 @@ class MonitoringOutboxWorkerTest {
         tx.setTransactionId("txn-123");
         tx.setTransactionType("AUTHORIZATION");
 
-        Decision authDecision = new Decision("txn-123", RuleEvaluator.EVAL_AUTH);
+        Decision authDecision = new Decision("txn-123", RuleEvaluator.EVAL_MONITORING);
         authDecision.setDecision(Decision.DECISION_APPROVE);
         authDecision.setRulesetKey("CARD_AUTH");
         authDecision.setTransactionContext(tx.toEvaluationContext());
@@ -103,7 +103,7 @@ class MonitoringOutboxWorkerTest {
         tx.setTransactionId("txn-404");
         tx.setTransactionType("AUTHORIZATION");
 
-        Decision authDecision = new Decision("txn-404", RuleEvaluator.EVAL_AUTH);
+        Decision authDecision = new Decision("txn-404", RuleEvaluator.EVAL_MONITORING);
         authDecision.setDecision(Decision.DECISION_DECLINE);
         authDecision.setRulesetKey("CARD_AUTH");
         authDecision.setTransactionContext(tx.toEvaluationContext());
@@ -123,7 +123,7 @@ class MonitoringOutboxWorkerTest {
         tx.setTransactionId("txn-fail");
         tx.setTransactionType("AUTHORIZATION");
 
-        Decision authDecision = new Decision("txn-fail", RuleEvaluator.EVAL_AUTH);
+        Decision authDecision = new Decision("txn-fail", RuleEvaluator.EVAL_MONITORING);
         authDecision.setDecision(Decision.DECISION_APPROVE);
         authDecision.setRulesetKey("CARD_AUTH");
         authDecision.setTransactionContext(tx.toEvaluationContext());
@@ -153,7 +153,7 @@ class MonitoringOutboxWorkerTest {
         OutboxFacade mockFacade = Mockito.mock(OutboxFacade.class);
         setField(worker, "outboxClient", mockFacade);
 
-        Decision authDecision = new Decision("txn-missing", RuleEvaluator.EVAL_AUTH);
+        Decision authDecision = new Decision("txn-missing", RuleEvaluator.EVAL_MONITORING);
         OutboxEntry missingTx = new OutboxEntry("3-1", new OutboxEvent(null, authDecision));
         worker.processEntry(missingTx);
 

@@ -81,7 +81,7 @@ class OutboxFacadeTest {
         TransactionContext tx = new TransactionContext();
         tx.setTransactionId(txId);
 
-        Decision authDecision = new Decision(txId, RuleEvaluator.EVAL_AUTH);
+        Decision authDecision = new Decision(txId, RuleEvaluator.EVAL_MONITORING);
         authDecision.setDecision(Decision.DECISION_APPROVE);
         return new OutboxEvent(tx, authDecision);
     }

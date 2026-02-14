@@ -44,8 +44,8 @@ class RulesetKeyResolverTest {
     }
 
     @Test
-    void resolvesAuthWhenEvaluationTypeNull() {
-        assertEquals("CARD_AUTH", resolver.resolve(null, (String) null));
+    void resolvesMonitoringWhenEvaluationTypeNull() {
+        assertEquals("CARD_MONITORING", resolver.resolve(null, (String) null));
     }
 
     @Test

@@ -194,14 +194,7 @@ public class LoadSheddingFilter implements ContainerRequestFilter, ContainerResp
     }
 
     private String resolveEvaluationType(String path) {
-        if (path == null) {
-            return RuleEvaluator.EVAL_AUTH;
-        }
-        String normalized = path.toLowerCase();
-        if (normalized.contains("/monitoring")) {
-            return RuleEvaluator.EVAL_MONITORING;
-        }
-        return RuleEvaluator.EVAL_AUTH;
+        return RuleEvaluator.EVAL_MONITORING;
     }
 
     private String readText(JsonNode node, String... names) {

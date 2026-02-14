@@ -22,14 +22,13 @@ public class RuleEvaluator {
 
     private static final Logger LOG = Logger.getLogger(RuleEvaluator.class);
 
-    public static final String EVAL_AUTH = "AUTH";
     public static final String EVAL_MONITORING = "MONITORING";
     public static final String EVAL_REPLAY_MODE = "REPLAY";
 
     private static final boolean STATIC_DEBUG_ENABLED = EvaluationConfig.isStaticDebugEnabled();
 
     public enum EvaluationType {
-        AUTH, MONITORING, REPLAY;
+        MONITORING, REPLAY;
 
         public String getValue() {
             return name();
@@ -71,9 +70,8 @@ public class RuleEvaluator {
 
         try {
             Map<String, Object> evalContext = null;
-            // Keep AUTH map creation lazy: only build evaluation context when a rule/debug path needs it.
-            // MONITORING/REPLAY still materialize the context because it's included in decision payloads.
-            if (!EVAL_AUTH.equalsIgnoreCase(ruleset.getEvaluationType())) {
+            // Keep MONITORING/REPLAY map creation: materialize context because it's included in decision payloads.
+            if (!EVAL_MONITORING.equalsIgnoreCase(ruleset.getEvaluationType())) {
                 evalContext = transaction.toEvaluationContext();
                 decision.setTransactionContext(evalContext);
             }

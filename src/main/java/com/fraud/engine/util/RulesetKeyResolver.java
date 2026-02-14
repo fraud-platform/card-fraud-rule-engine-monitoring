@@ -8,7 +8,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 public class RulesetKeyResolver {
 
     public String resolve(TransactionContext transaction, String evaluationType) {
-        String normalizedType = evaluationType == null ? RuleEvaluator.EVAL_AUTH : evaluationType.trim().toUpperCase();
+        String normalizedType = evaluationType == null ? RuleEvaluator.EVAL_MONITORING : evaluationType.trim().toUpperCase();
         return "CARD_" + normalizedType;
     }
 
