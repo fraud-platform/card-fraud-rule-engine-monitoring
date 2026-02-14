@@ -106,7 +106,7 @@ public class ManagementResource {
 
         try {
             // Determine ruleset key
-            String rulesetKey = request.rulesetKey != null ? request.rulesetKey : "CARD_AUTH";
+            String rulesetKey = request.rulesetKey != null ? request.rulesetKey : "CARD_MONITORING";
 
             // Load specified ruleset version (for replay against specific version)
             Decision decision;
@@ -158,7 +158,7 @@ public class ManagementResource {
 
         for (TransactionContext transaction : request.transactions) {
             try {
-                String rulesetKey = request.rulesetKey != null ? request.rulesetKey : "CARD_AUTH";
+                String rulesetKey = request.rulesetKey != null ? request.rulesetKey : "CARD_MONITORING";
 
                 Decision decision = null;
                 Optional<Ruleset> compiledOpt;

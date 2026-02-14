@@ -19,7 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * A ruleset is identified by a key and version, and contains:
  * - Rules that will be evaluated
  * - Metadata (version, created timestamp, etc.)
- * - Evaluation mode (AUTH or MONITORING)
+ * - Evaluation mode (MONITORING in this split service)
  * - Compiled rules for high-performance evaluation
  * - Scope buckets for efficient rule filtering
  */

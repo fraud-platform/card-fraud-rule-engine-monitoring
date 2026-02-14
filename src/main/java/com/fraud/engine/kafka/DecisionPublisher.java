@@ -3,6 +3,8 @@ package com.fraud.engine.kafka;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fraud.engine.domain.Decision;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
@@ -14,6 +16,10 @@ import org.jboss.logging.Logger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -40,6 +46,39 @@ public class DecisionPublisher {
 
     @ConfigProperty(name = "mp.messaging.outgoing.decision-events.topic", defaultValue = "fraud.card.decisions.v1")
     String topicName;
+
+    @ConfigProperty(name = "app.decision.publisher.async-threads", defaultValue = "4")
+    int asyncThreads;
+
+    private ExecutorService asyncPublisherPool;
+
+    @PostConstruct
+    void init() {
+        int threads = Math.max(1, asyncThreads);
+        ThreadFactory factory = r -> {
+            Thread t = new Thread(r, "decision-publisher-async");
+            t.setDaemon(true);
+            return t;
+        };
+        asyncPublisherPool = Executors.newFixedThreadPool(threads, factory);
+        LOG.infof("DecisionPublisher async pool initialized with %d thread(s)", threads);
+    }
+
+    @PreDestroy
+    void destroy() {
+        if (asyncPublisherPool == null) {
+            return;
+        }
+        asyncPublisherPool.shutdown();
+        try {
+            if (!asyncPublisherPool.awaitTermination(5, TimeUnit.SECONDS)) {
+                asyncPublisherPool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            asyncPublisherPool.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     /**
      * Publishes a decision event to Kafka.
@@ -120,31 +159,9 @@ public class DecisionPublisher {
      */
     public void publishDecisionAsync(Decision decision) {
         try {
-            DecisionEventCreate event = toDecisionEventCreate(decision);
-            String payload = objectMapper.writeValueAsString(event);
-
-            if (LOG.isDebugEnabled()) {
-                LOG.debugf("Publishing decision event (async): %s", decision.getDecisionId());
-            }
-
-            // Fire-and-forget: return immediately, don't wait for Kafka ack
-            decisionEmitter.send(payload)
-                .subscribe()
-                .with(
-                    v -> {
-                        if (LOG.isDebugEnabled()) {
-                            LOG.debugf("Decision event published (async): %s", decision.getDecisionId());
-                        }
-                    },
-                    err -> LOG.errorf(err, "Failed to publish decision event (async): %s", decision.getDecisionId())
-                );
-
-        } catch (JsonProcessingException e) {
-            LOG.errorf(e, "Failed to serialize decision event: %s", decision.getDecisionId());
-            // Don't throw - just log and continue (fail-open for performance)
+            asyncPublisherPool.execute(() -> publishDecision(decision));
         } catch (Exception e) {
-            LOG.errorf(e, "Failed to publish decision event: %s", decision.getDecisionId());
-            // Don't throw - just log and continue
+            LOG.errorf(e, "Failed to enqueue decision publish task: %s", decision.getDecisionId());
         }
     }
 

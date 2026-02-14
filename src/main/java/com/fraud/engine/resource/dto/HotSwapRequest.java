@@ -8,7 +8,7 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 @Schema(description = "Hot swap request")
 public class HotSwapRequest {
 
-    @Schema(description = "Ruleset key", example = "CARD_AUTH")
+    @Schema(description = "Ruleset key", example = "CARD_MONITORING")
     public String key;
 
     @Schema(description = "New version", example = "2")

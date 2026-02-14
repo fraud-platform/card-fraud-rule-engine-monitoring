@@ -15,7 +15,7 @@ public class ReplayRequest {
     @Schema(description = "Transaction context")
     public TransactionContext transaction;
 
-    @Schema(description = "Ruleset key (optional, defaults to CARD_AUTH)", example = "CARD_AUTH")
+    @Schema(description = "Ruleset key (optional, defaults to CARD_MONITORING)", example = "CARD_MONITORING")
     public String rulesetKey;
 
     @Schema(description = "Specific ruleset version (optional, defaults to latest)", example = "1")

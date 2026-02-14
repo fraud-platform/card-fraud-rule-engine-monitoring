@@ -17,7 +17,6 @@ import org.jboss.logging.Logger;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -52,7 +51,7 @@ public class HotReloadCoordinator {
     @ConfigProperty(name = "app.hot-reload.poll-interval-seconds", defaultValue = "30")
     int pollIntervalSeconds;
 
-    @ConfigProperty(name = "app.ruleset.required-keys", defaultValue = "CARD_AUTH,CARD_MONITORING")
+    @ConfigProperty(name = "app.ruleset.required-keys", defaultValue = "CARD_MONITORING")
     String requiredRulesetKeys;
 
     @Inject

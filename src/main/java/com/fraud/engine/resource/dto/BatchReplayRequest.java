@@ -14,7 +14,7 @@ public class BatchReplayRequest {
     @Schema(description = "List of transactions to replay")
     public List<TransactionContext> transactions;
 
-    @Schema(description = "Ruleset key", example = "CARD_AUTH")
+    @Schema(description = "Ruleset key", example = "CARD_MONITORING")
     public String rulesetKey;
 
     @Schema(description = "Ruleset version (optional)")

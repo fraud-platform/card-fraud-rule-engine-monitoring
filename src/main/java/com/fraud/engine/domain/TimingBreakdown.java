@@ -6,7 +6,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 /**
  * Detailed timing breakdown for evaluation latency analysis.
  * <p>
- * Captures component-level timing to ensure 10-20ms AUTH latency target is met.
+ * Captures component-level timing to keep MONITORING latency within service SLOs.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class TimingBreakdown {

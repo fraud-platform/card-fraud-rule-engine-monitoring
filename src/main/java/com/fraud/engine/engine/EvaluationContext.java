@@ -87,7 +87,7 @@ public record EvaluationContext(
     }
 
     public String getEvaluationType() {
-        return ruleset != null ? ruleset.getEvaluationType() : "AUTH";
+        return ruleset != null ? ruleset.getEvaluationType() : "MONITORING";
     }
 
     public boolean isDebugEnabled() {

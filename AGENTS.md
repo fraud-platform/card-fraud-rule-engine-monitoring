@@ -129,6 +129,15 @@ Core dependencies:
 - API Gateway-authenticated ingress (token verification offloaded upstream)
 - Doppler secrets
 
+### Monitoring SLA targets
+
+For `POST /v1/evaluate/monitoring`, use:
+- `P50 < 50ms`
+- `P90 < 80ms`
+- `P99 < 100ms`
+
+See `docs/06-operations/slos.md` for the full SLO/SLA policy.
+
 ## 5) API Surface
 
 ### Evaluation endpoints
@@ -223,5 +232,15 @@ doppler run --config local -- \
 **Load test configuration (`%load-test` profile):**
 - `app.load-shedding.enabled: false` - Measure true capacity
 - `quarkus.log.level: WARN` - Suppress hot-path logging
+
+For split-service end-to-end load testing via Docker (recommended for AUTH+MONITORING flow), use:
+
+```bash
+cd ../card-fraud-platform
+doppler run -- uv run platform-up -- --apps
+
+cd ../card-fraud-e2e-load-testing
+uv run lt-rule-engine-monitoring --users=50 --spawn-rate=10 --run-time=2m --scenario baseline --headless
+```
 
 Last updated: 2026-02-13

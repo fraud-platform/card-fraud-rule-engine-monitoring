@@ -45,7 +45,7 @@ public class S3StartupValidator {
     @ConfigProperty(name = "app.startup.validation.enabled", defaultValue = "true")
     boolean validationEnabled;
 
-    @ConfigProperty(name = "app.ruleset.required-keys", defaultValue = "CARD_AUTH,CARD_MONITORING")
+    @ConfigProperty(name = "app.ruleset.required-keys", defaultValue = "CARD_MONITORING")
     String requiredRulesetKeys;
 
     @Inject

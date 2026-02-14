@@ -51,6 +51,15 @@ Management:
 - `POST /v1/manage/simulate`
 - `GET /v1/manage/metrics`
 
+## Monitoring SLA
+
+Latency objectives for `POST /v1/evaluate/monitoring`:
+- `P50 < 50ms`
+- `P90 < 80ms`
+- `P99 < 100ms`
+
+Reference: `docs/06-operations/slos.md`
+
 ## Test Commands
 
 ```bash

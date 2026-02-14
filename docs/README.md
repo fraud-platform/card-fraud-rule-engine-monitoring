@@ -85,6 +85,11 @@ Runbooks, observability, troubleshooting, and security operations.
 - `06-operations/ruleset-reload-loop.md`
 - `06-operations/slos.md`
 
+Current monitoring latency targets (`/v1/evaluate/monitoring`):
+- `P50 < 50ms`
+- `P90 < 80ms`
+- `P99 < 100ms`
+
 ### `07-reference` - Reference
 
 ADRs, glossary, and cross-repo reference material.

@@ -74,7 +74,7 @@ public class RulesetRegistry {
      * This is a non-blocking read operation suitable for the hot path.
      *
      * @param country the country code (e.g., "US", "UK")
-     * @param rulesetKey the ruleset key (e.g., "CARD_AUTH")
+     * @param rulesetKey the ruleset key (e.g., "CARD_MONITORING")
      * @return the compiled ruleset, or null if not found
      */
     public Ruleset getRuleset(String country, String rulesetKey) {

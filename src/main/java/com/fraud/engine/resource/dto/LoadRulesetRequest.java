@@ -8,7 +8,7 @@ import org.eclipse.microprofile.openapi.annotations.media.Schema;
 @Schema(description = "Load ruleset request")
 public class LoadRulesetRequest {
 
-    @Schema(description = "Ruleset key", example = "CARD_AUTH")
+    @Schema(description = "Ruleset key", example = "CARD_MONITORING")
     public String key;
 
     @Schema(description = "Ruleset version", example = "1")

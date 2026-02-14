@@ -106,7 +106,7 @@ public class RulesetLoader {
      * Falls back to legacy path if not found: rulesets/{env}/{rulesetKey}/manifest.json
      *
      * @param country the country code (e.g., "US")
-     * @param rulesetKey the ruleset key (e.g., "CARD_AUTH")
+     * @param rulesetKey the ruleset key (e.g., "CARD_MONITORING")
      * @return manifest or null if not found
      */
     public RulesetManifest loadManifest(String country, String rulesetKey) {
@@ -160,7 +160,7 @@ public class RulesetLoader {
      * <p>
      * For new code, prefer {@link #loadManifest(String, String)} with explicit country parameter.
      *
-     * @param rulesetKey the ruleset key (e.g., "CARD_AUTH")
+     * @param rulesetKey the ruleset key (e.g., "CARD_MONITORING")
      * @return manifest or null if not found
      */
     public RulesetManifest loadManifest(String rulesetKey) {
@@ -306,7 +306,7 @@ public class RulesetLoader {
     /**
      * Loads a ruleset from S3 storage.
      *
-     * @param rulesetKey the ruleset key (e.g., "CARD_AUTH")
+     * @param rulesetKey the ruleset key (e.g., "CARD_MONITORING")
      * @param version    the ruleset version
      * @return the loaded ruleset, or empty if not found
      */
@@ -387,7 +387,7 @@ public class RulesetLoader {
             int latestVersion = 0;
             for (S3Object s3Object : s3Client.listObjectsV2(listRequest).contents()) {
                 String key = s3Object.key();
-                // Extract version from path like "rulesets/CARD_AUTH/v3/ruleset.yaml"
+                // Extract version from path like "rulesets/CARD_MONITORING/v3/ruleset.yaml"
                 String versionStr = extractVersion(key);
                 if (versionStr != null) {
                     try {
@@ -907,7 +907,7 @@ public class RulesetLoader {
         if (mode != null) {
             switch (mode.toUpperCase()) {
                 case "FIRST_MATCH":
-                    return "AUTH";
+                    return "MONITORING";
                 case "ALL_MATCHING":
                     return "MONITORING";
             }
@@ -915,7 +915,7 @@ public class RulesetLoader {
         if (rulesetKey != null && rulesetKey.toUpperCase().contains("MONITORING")) {
             return "MONITORING";
         }
-        return "AUTH";
+        return "MONITORING";
     }
 
     /**

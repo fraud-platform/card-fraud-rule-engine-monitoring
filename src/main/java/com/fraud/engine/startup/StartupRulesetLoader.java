@@ -16,7 +16,7 @@ import java.util.List;
  * Startup bean that pre-loads rulesets into the registry at application startup.
  * <p>
  * This ensures rulesets are available in memory before the application accepts
- * traffic, eliminating S3 I/O from the hot path and achieving 10-20ms latency.
+     * traffic, eliminating S3 I/O from the hot path and achieving low-latency evaluation.
  * <p>
  * <b>Fail-Fast Behavior:</b> If startup loading is enabled and any ruleset fails
  * to load, the application will fail to start. This prevents running with degraded
@@ -36,7 +36,7 @@ public class StartupRulesetLoader {
     @ConfigProperty(name = "app.ruleset.startup.load-enabled", defaultValue = "true")
     boolean startupLoadEnabled;
 
-    @ConfigProperty(name = "app.ruleset.startup.rulesets", defaultValue = "CARD_AUTH,CARD_MONITORING")
+    @ConfigProperty(name = "app.ruleset.startup.rulesets", defaultValue = "CARD_MONITORING")
     List<String> startupRulesets;
 
     @ConfigProperty(name = "app.ruleset.startup.fail-fast", defaultValue = "true")
