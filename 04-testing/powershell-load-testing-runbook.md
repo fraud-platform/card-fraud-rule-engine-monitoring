@@ -45,10 +45,9 @@ Date captured: `2026-02-12`
 - Symptom: container logs show startup JFR recording and latency matrix drifts from prior non-JFR baselines.
 - Cause: platform compose sets `JAVA_JFR_OPTS` by default.
 - Fix:
-  - For non-profiling baselines, explicitly clear JFR in override:
-    - `testing/compose-auth-no-async.override.yml` with `JAVA_JFR_OPTS=`
-  - Recreate service after override changes:
-    - `doppler run -- docker compose -f docker-compose.yml -f docker-compose.apps.yml -f ../card-fraud-rule-engine/testing/compose-auth-no-async.override.yml -p card-fraud-platform up -d --force-recreate rule-engine`
+  - Baseline runs should keep JFR OFF.
+  - If JFR is needed, enable it explicitly when starting apps:
+    - `cd ../card-fraud-platform; doppler run -- uv run platform-up -- --apps --jfr --force-recreate`
 
 6. Docker Desktop engine pipe unavailable (`dockerDesktopLinuxEngine`)
 - Symptom: `failed to connect to the docker API ... dockerDesktopLinuxEngine`.
@@ -105,7 +104,8 @@ $env:TEST_TRANSACTION_MGMT = "false"
 $env:TEST_RULE_MGMT = "false"
 $env:RULE_ENGINE_PREAUTH_WEIGHT = "1.0"
 $env:RULE_ENGINE_POSTAUTH_WEIGHT = "0.0"
-$env:RULE_ENGINE_URL = "http://localhost:8081"
+$env:RULE_ENGINE_MODE = "auth"
+$env:RULE_ENGINE_AUTH_URL = "http://localhost:8081"
 
 $workerArgs = @(
   "run", "locust",

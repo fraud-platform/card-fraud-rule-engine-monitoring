@@ -4,6 +4,58 @@
 
 This document consolidates verified performance findings after the AUTH async-durability redesign, distributed load reruns, and JFR review.
 
+## 2026-02-15 Update (split-service production-mirror runs)
+
+Direct Locust runs (no harness seed/teardown), `20 users`, `5m`, local platform containers:
+
+- AUTH (paced 20-80ms wait):
+  - `48,250 req`, `0 failures`, `p50 54`, `p95 110`, `p99 170`, `avg 61`, `rps 161.27`
+- MONITORING (paced 20-80ms wait):
+  - `54,609 req`, `0 failures`, `p50 50`, `p95 68`, `p99 96`, `avg 52`, `rps 182.48`
+- MONITORING (no wait, throughput-pressure check):
+  - `78,418 req`, `0 failures`, `p50 58`, `p95 110`, `p99 210`, `avg 67`, `rps 266.36`
+
+Important session finding:
+- AUTH initially failed with `100% FAIL_OPEN: INTERNAL_ERROR` because registry was empty.
+- Cause was path mismatch between loader expectations and object-storage keys.
+- After local compatibility key fix and successful ruleset load, AUTH run became valid (`0 failures`).
+
+Practical conclusions from this update:
+- Throughput increase clearly degrades tails (`MON p95 68 -> 110`, `p99 96 -> 210`).
+- Current floor is likely dominated by shared local runtime/infrastructure effects (CPU pressure + local container networking), not just rule-engine hot-path logic.
+
+Paired rerun added (same day, paced `20-80ms`, `20 users`, `5m`):
+- AUTH: `72,312 req`, `0 failures`, `p50 14`, `p95 55`, `p99 120`, `avg 20`, `rps 242.86`
+- MONITORING: `72,458 req`, `0 failures`, `p50 15`, `p95 54`, `p99 100`, `avg 20`, `rps 242.18`
+- Capacity sample summary:
+  - AUTH CPU `avg 46.04%`, `max 64.49%`; memory `avg 59.87%`, `max 60.04%`
+  - MON CPU `avg 55.80%`, `max 192.53%` burst; memory `avg 60.19%`, `max 61.43%`
+
+Interpretation update:
+- Yes, throughput affects latency in this environment.
+- Evidence: raising MON throughput from paced (`~182 rps`) to no-wait (`~266 rps`) increased tails (`p95 68 -> 110`, `p99 96 -> 210`).
+
+Additional same-day step-ladder evidence (`20 -> 35 -> 50` users, paced `20-80ms`, `2m` each):
+- AUTH: `p95 45 -> 68 -> 120`, `p99 80 -> 100 -> 160`
+- MONITORING: `p95 41 -> 91 -> 190`, `p99 74 -> 170 -> 870`
+
+Conclusion reinforcement:
+- Yes, throughput and concurrency materially affect latency, especially tail percentiles.
+
+Knee-point snapshot:
+
+| Service | Knee zone | Why |
+| --- | --- | --- |
+| AUTH | `35 -> 50 users` | `p95` jumps `68 -> 120` and `p50` jumps `29 -> 50` while RPS does not increase (`300.23 -> 292.84`). |
+| MONITORING | `20 -> 35 users` (onset), severe at `50` | `p95` more than doubles `41 -> 91` by `35`; at `50`, tails surge (`p99 870`) with lower RPS (`261.47 -> 235.75`). |
+
+Compact trend chart:
+
+| Service | Users=20 | Users=35 | Users=50 |
+| --- | --- | --- | --- |
+| AUTH p95/p99 (ms) | `45 / 80` | `68 / 100` | `120 / 160` |
+| MON p95/p99 (ms) | `41 / 74` | `91 / 170` | `190 / 870` |
+
 ---
 
 ## What we observed

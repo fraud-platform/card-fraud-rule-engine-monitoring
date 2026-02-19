@@ -54,6 +54,9 @@ Do not document or test uppercase route variants.
 
 ## 2) Quickstart For Any Agent
 
+For repeatable execution and handoff, follow:
+- `docs/06-operations/repeatable-workflow-checklist.md`
+
 ```bash
 # 1) Install dependencies
 uv sync
@@ -81,6 +84,7 @@ uv run doppler-local
 ## 3) Command Catalog (Source: `pyproject.toml`)
 
 ### Infrastructure
+- `uv run preflight`
 - `uv run infra-local-up`
 - `uv run infra-local-down`
 - `uv run redis-local-up`

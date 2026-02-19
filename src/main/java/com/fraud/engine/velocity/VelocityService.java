@@ -22,6 +22,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -41,6 +42,7 @@ public class VelocityService {
     private static final Logger LOG = Logger.getLogger(VelocityService.class);
     private static final String VELOCITY_KEY_PREFIX = "vel:";
     private static final String LUA_SCRIPT_PATH = "/lua/velocity_check.lua";
+    private static final String LUA_MULTI_SCRIPT_PATH = "/lua/velocity_check_multi.lua";
     private static final Pattern INVALID_KEY_CHARS = Pattern.compile("[^a-zA-Z0-9._-]");
 
     @Inject
@@ -61,12 +63,24 @@ public class VelocityService {
     private ValueCommands<String, Long> valueCommands;
     private String luaScript;
     private String luaScriptSha;
+    private String luaMultiScript;
+    private String luaMultiScriptSha;
     private RedisAPI redisAPI;
+    private String defaultThresholdStr;
+
+    private static final String LUA_NUMKEYS_ONE = "1";
+
+    private static String luaNumKeys(int numKeys) {
+        // Avoid allocating via String.valueOf in hot paths.
+        // This is called only when velocity batching is used.
+        return Integer.toString(numKeys);
+    }
 
     @PostConstruct
     void init() {
         valueCommands = redisDataSource.value(Long.class);
         redisAPI = RedisAPI.api(redis);
+        defaultThresholdStr = String.valueOf(defaultThreshold);
 
         // Load Lua script
         try {
@@ -77,6 +91,15 @@ public class VelocityService {
                 if (response != null) {
                     luaScriptSha = response.toString();
                     LOG.infof("Velocity Lua script loaded with SHA: %s", luaScriptSha);
+                }
+            }
+
+            luaMultiScript = loadLuaScript(LUA_MULTI_SCRIPT_PATH);
+            if (useLuaScript && luaMultiScript != null) {
+                Response multiResponse = redisAPI.scriptAndAwait(List.of("LOAD", luaMultiScript));
+                if (multiResponse != null) {
+                    luaMultiScriptSha = multiResponse.toString();
+                    LOG.infof("Velocity multi Lua script loaded with SHA: %s", luaMultiScriptSha);
                 }
             }
         } catch (Exception e) {
@@ -91,18 +114,146 @@ public class VelocityService {
      * Loads the Lua script from classpath.
      */
     private String loadLuaScript() {
-        try (InputStream is = getClass().getResourceAsStream(LUA_SCRIPT_PATH)) {
+        return loadLuaScript(LUA_SCRIPT_PATH);
+    }
+
+    private String loadLuaScript(String classpathPath) {
+        try (InputStream is = getClass().getResourceAsStream(classpathPath)) {
             if (is == null) {
-                LOG.warn("Lua script not found at: " + LUA_SCRIPT_PATH);
+                LOG.warn("Lua script not found at: " + classpathPath);
                 return null;
             }
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
                 return reader.lines().collect(Collectors.joining("\n"));
             }
         } catch (IOException e) {
-            LOG.warnf(e, "Failed to read Lua script from: %s", LUA_SCRIPT_PATH);
+            LOG.warnf(e, "Failed to read Lua script from: %s", classpathPath);
             return null;
         }
+    }
+
+    /**
+     * Batch velocity check for multiple configs.
+     *
+     * <p>Uses the multi-key Lua script to reduce N Redis RTTs into 1.
+     * Returns results aligned to the input order.
+     */
+    public Decision.VelocityResult[] checkVelocityBatch(TransactionContext transaction, List<VelocityConfig> velocityConfigs) {
+        if (velocityConfigs == null || velocityConfigs.isEmpty()) {
+            return new Decision.VelocityResult[0];
+        }
+
+        String[] keys = new String[velocityConfigs.size()];
+        String[] windows = new String[velocityConfigs.size()];
+        String[] thresholds = new String[velocityConfigs.size()];
+        String[] dimensions = new String[velocityConfigs.size()];
+        String[] dimensionValues = new String[velocityConfigs.size()];
+
+        for (int i = 0; i < velocityConfigs.size(); i++) {
+            VelocityConfig velocityConfig = velocityConfigs.get(i);
+
+            String dimension = velocityConfig.getDimension();
+            int windowSeconds = velocityConfig.getWindowSeconds() > 0
+                    ? velocityConfig.getWindowSeconds()
+                    : defaultWindowSeconds;
+            int threshold = velocityConfig.getThreshold() > 0
+                    ? velocityConfig.getThreshold()
+                    : defaultThreshold;
+
+            Object dimValue = getDimensionValue(transaction, dimension);
+            String dimensionValueStr = dimValue != null ? String.valueOf(dimValue) : null;
+            String key = buildVelocityKeyDirect(dimension, dimensionValueStr);
+
+            keys[i] = key;
+            windows[i] = Integer.toString(windowSeconds);
+            thresholds[i] = threshold == defaultThreshold ? defaultThresholdStr : Integer.toString(threshold);
+            dimensions[i] = dimension;
+            dimensionValues[i] = dimensionValueStr;
+        }
+
+        long[] counts;
+        if (useLuaScript && luaMultiScriptSha != null) {
+            counts = incrementAndGetWithLuaBatch(keys, windows, thresholds);
+        } else {
+            counts = new long[keys.length];
+            for (int i = 0; i < keys.length; i++) {
+                counts[i] = incrementAndGet(keys[i], Integer.parseInt(windows[i]), Integer.parseInt(thresholds[i]));
+            }
+        }
+
+        Decision.VelocityResult[] results = new Decision.VelocityResult[velocityConfigs.size()];
+        for (int i = 0; i < velocityConfigs.size(); i++) {
+            VelocityConfig velocityConfig = velocityConfigs.get(i);
+            int windowSeconds = velocityConfig.getWindowSeconds() > 0
+                    ? velocityConfig.getWindowSeconds()
+                    : defaultWindowSeconds;
+            int threshold = velocityConfig.getThreshold() > 0
+                    ? velocityConfig.getThreshold()
+                    : defaultThreshold;
+
+            results[i] = new Decision.VelocityResult(
+                    dimensions[i],
+                    dimensionValues[i],
+                    counts[i],
+                    threshold,
+                    windowSeconds
+            );
+        }
+        return results;
+    }
+
+    private long[] incrementAndGetWithLuaBatch(String[] keys, String[] windows, String[] thresholds) {
+        try {
+            return executeLuaBatch(keys, windows, thresholds);
+        } catch (Exception e) {
+            if (e.getMessage() != null && e.getMessage().contains("NOSCRIPT")) {
+                LOG.info("Multi Lua script not found in Redis, reloading...");
+                reloadLuaScripts();
+                if (useLuaScript && luaMultiScriptSha != null) {
+                    try {
+                        return executeLuaBatch(keys, windows, thresholds);
+                    } catch (Exception retryEx) {
+                        LOG.warnf(retryEx, "Multi Lua retry failed");
+                    }
+                }
+            } else {
+                LOG.warnf(e, "Multi Lua execution failed, falling back to per-key ops");
+            }
+
+            long[] fallbackCounts = new long[keys.length];
+            for (int i = 0; i < keys.length; i++) {
+                fallbackCounts[i] = incrementAndGet(keys[i], Integer.parseInt(windows[i]), Integer.parseInt(thresholds[i]));
+            }
+            return fallbackCounts;
+        }
+    }
+
+    private long[] executeLuaBatch(String[] keys, String[] windows, String[] thresholds) {
+        int numKeys = keys.length;
+        List<String> args = new java.util.ArrayList<>(2 + numKeys + numKeys + numKeys);
+        args.add(luaMultiScriptSha);
+        args.add(luaNumKeys(numKeys));
+
+        for (String key : keys) {
+            args.add(key);
+        }
+        for (String window : windows) {
+            args.add(window);
+        }
+        for (String threshold : thresholds) {
+            args.add(threshold);
+        }
+
+        Response response = redisAPI.evalshaAndAwait(args);
+        if (response == null || response.size() < numKeys * 2) {
+            throw new IllegalStateException("Unexpected multi Lua response");
+        }
+
+        long[] counts = new long[numKeys];
+        for (int i = 0; i < numKeys; i++) {
+            counts[i] = response.get(i * 2).toLong();
+        }
+        return counts;
     }
 
     private ValueCommands<String, Long> getValueCommands() {
@@ -140,16 +291,16 @@ public class VelocityService {
                 ? velocityConfig.getThreshold()
                 : defaultThreshold;
 
-        String key = buildVelocityKey(transaction, velocityConfig);
         Object dimValue = getDimensionValue(transaction, dimension);
         String dimensionValueStr = dimValue != null ? String.valueOf(dimValue) : null;
+        String key = buildVelocityKeyDirect(dimension, dimensionValueStr);
 
         if (LOG.isDebugEnabled()) {
             LOG.debugf("Velocity check: key=%s, window=%ds, threshold=%d", key, windowSeconds, threshold);
         }
 
         try {
-            long count = incrementAndGet(key, windowSeconds);
+            long count = incrementAndGet(key, windowSeconds, threshold);
 
             Decision.VelocityResult result = new Decision.VelocityResult(
                     dimension,
@@ -210,23 +361,14 @@ public class VelocityService {
      * @return the Redis key for this velocity counter
      */
     public String buildVelocityKey(TransactionContext transaction, VelocityConfig config) {
-        StringBuilder key = new StringBuilder(VELOCITY_KEY_PREFIX);
+        Object dimValue = getDimensionValue(transaction, config.getDimension());
+        String dimensionValueStr = dimValue != null ? String.valueOf(dimValue) : null;
+        return buildVelocityKeyDirect(config.getDimension(), dimensionValueStr);
+    }
 
-        // Add ruleset key prefix (from transaction context or config)
-        key.append("global:"); // Could be made configurable
-
-        // Add dimension
-        key.append(config.getDimension()).append(":");
-
-        // Get the value for the dimension from the transaction
-        Object dimensionValue = getDimensionValue(transaction, config.getDimension());
-        if (dimensionValue != null) {
-            key.append(encodeKeyPart(String.valueOf(dimensionValue)));
-        } else {
-            key.append("unknown");
-        }
-
-        return key.toString();
+    private String buildVelocityKeyDirect(String dimension, String dimensionValueStr) {
+        String encoded = dimensionValueStr != null ? encodeKeyPart(dimensionValueStr) : "unknown";
+        return VELOCITY_KEY_PREFIX + "global:" + dimension + ":" + encoded;
     }
 
     /**
@@ -245,9 +387,9 @@ public class VelocityService {
      * @param windowSeconds expiry time in seconds
      * @return the new counter value (always accurate due to atomic INCR)
      */
-    long incrementAndGet(String key, int windowSeconds) {
+    long incrementAndGet(String key, int windowSeconds, int threshold) {
         if (useLuaScript && luaScriptSha != null) {
-            return incrementAndGetWithLua(key, windowSeconds);
+            return incrementAndGetWithLua(key, windowSeconds, threshold);
         }
         return incrementAndGetFallback(key, windowSeconds);
     }
@@ -255,15 +397,17 @@ public class VelocityService {
     /**
      * Increments counter using Lua script (single round-trip).
      */
-    private long incrementAndGetWithLua(String key, int windowSeconds) {
+    private long incrementAndGetWithLua(String key, int windowSeconds, int threshold) {
         try {
             // EVALSHA sha numkeys key [key ...] arg [arg ...]
             Response response = redisAPI.evalshaAndAwait(List.of(
                     luaScriptSha,
-                    "1",                              // numkeys
+                    LUA_NUMKEYS_ONE,                  // numkeys
                     key,                              // KEYS[1]
                     String.valueOf(windowSeconds),    // ARGV[1]
-                    String.valueOf(defaultThreshold)  // ARGV[2]
+                    threshold == defaultThreshold
+                            ? defaultThresholdStr
+                            : String.valueOf(threshold) // ARGV[2]
             ));
 
             if (response != null && response.size() >= 1) {
@@ -280,10 +424,12 @@ public class VelocityService {
                 try {
                     Response response = redisAPI.evalshaAndAwait(List.of(
                             luaScriptSha,
-                            "1",
+                            LUA_NUMKEYS_ONE,
                             key,
                             String.valueOf(windowSeconds),
-                            String.valueOf(defaultThreshold)
+                            threshold == defaultThreshold
+                                    ? defaultThresholdStr
+                                    : String.valueOf(threshold)
                     ));
                     if (response != null && response.size() >= 1) {
                         return response.get(0).toLong();
@@ -302,12 +448,23 @@ public class VelocityService {
      * Reloads the Lua script into Redis.
      */
     private void reloadLuaScript() {
+        reloadLuaScripts();
+    }
+
+    private void reloadLuaScripts() {
         try {
             if (luaScript != null) {
                 Response response = redisAPI.scriptAndAwait(List.of("LOAD", luaScript));
                 if (response != null) {
                     luaScriptSha = response.toString();
                     LOG.infof("Lua script reloaded with SHA: %s", luaScriptSha);
+                }
+            }
+            if (luaMultiScript != null) {
+                Response response = redisAPI.scriptAndAwait(List.of("LOAD", luaMultiScript));
+                if (response != null) {
+                    luaMultiScriptSha = response.toString();
+                    LOG.infof("Multi Lua script reloaded with SHA: %s", luaMultiScriptSha);
                 }
             }
         } catch (Exception e) {
@@ -411,13 +568,13 @@ public class VelocityService {
         if (value == null || value.isEmpty()) {
             return "empty";
         }
-        if (value.length() <= 64) {
-            if (!INVALID_KEY_CHARS.matcher(value).find()) {
-                return value;
-            }
+
+        String truncated = value.length() > 64 ? value.substring(0, 64) : value;
+        Matcher matcher = INVALID_KEY_CHARS.matcher(truncated);
+        if (!matcher.find()) {
+            return truncated;
         }
-        return INVALID_KEY_CHARS.matcher(value).replaceAll("_")
-                .substring(0, Math.min(value.length(), 64));
+        return matcher.reset().replaceAll("_");
     }
 
     /**

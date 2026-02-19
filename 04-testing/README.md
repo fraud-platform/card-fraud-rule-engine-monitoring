@@ -9,6 +9,7 @@ Test strategy, local commands, and validation playbooks.
 - `load-testing-baseline.md`
 - `performance-findings-summary.md`
 - `powershell-load-testing-runbook.md`
+- `openshift-load-testing.md`
 
 ## Naming Rules
 

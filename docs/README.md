@@ -6,6 +6,7 @@ Quarkus runtime for fraud decision evaluation and compiled ruleset execution.
 
 ```powershell
 uv sync
+uv run preflight
 uv run doppler-local
 uv run test-unit
 uv run snyk-test
@@ -61,6 +62,7 @@ Test strategy, local commands, and validation playbooks.
 - `04-testing/load-testing-baseline.md`
 - `04-testing/performance-findings-summary.md`
 - `04-testing/powershell-load-testing-runbook.md`
+- `04-testing/openshift-load-testing.md`
 
 Load testing defaults to pre-loading compiled `CARD_AUTH` and `CARD_MONITORING` rulesets before traffic generation.
 
@@ -80,6 +82,7 @@ Runbooks, observability, troubleshooting, and security operations.
 - `06-operations/elevated-fail-open-rate.md`
 - `06-operations/manifest-query-failure.md`
 - `06-operations/multi-region-strategy.md`
+- `06-operations/repeatable-workflow-checklist.md`
 - `06-operations/redis-outage.md`
 - `06-operations/redis-velocity-and-replay.md`
 - `06-operations/ruleset-reload-loop.md`

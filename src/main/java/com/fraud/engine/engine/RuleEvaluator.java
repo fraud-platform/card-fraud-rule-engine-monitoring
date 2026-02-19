@@ -52,7 +52,7 @@ public class RuleEvaluator {
     }
 
     public Decision evaluate(TransactionContext transaction, Ruleset ruleset, boolean replayMode) {
-        long startTime = System.currentTimeMillis();
+        // OPT-10+11: Use nanoTime for consistent, high-resolution timing
         long startNanos = System.nanoTime();
 
         Decision decision = createDecision(transaction, ruleset, replayMode);
@@ -71,7 +71,7 @@ public class RuleEvaluator {
         try {
             Map<String, Object> evalContext = null;
             // Keep MONITORING/REPLAY map creation: materialize context because it's included in decision payloads.
-            if (!EVAL_MONITORING.equalsIgnoreCase(ruleset.getEvaluationType())) {
+            if (EVAL_MONITORING.equalsIgnoreCase(ruleset.getEvaluationType()) || replayMode) {
                 evalContext = transaction.toEvaluationContext();
                 decision.setTransactionContext(evalContext);
             }
@@ -90,7 +90,7 @@ public class RuleEvaluator {
             if (rulesToEvaluate.isEmpty()) {
                 LOG.warnf("No rules to evaluate for ruleset: %s", ruleset.getFullKey());
                 decision.setDecision(Decision.DECISION_APPROVE);
-                return finalizeDecision(decision, startTime, debugBuilder);
+                return finalizeDecision(decision, startNanos, debugBuilder);
             }
 
             // Measure context creation
@@ -100,7 +100,7 @@ public class RuleEvaluator {
                     ruleset,
                     decision,
                     replayMode,
-                    startTime,
+                    startNanos,
                     decision.getEngineMode(),
                     debugBuilder,
                     rulesToEvaluate,
@@ -122,7 +122,7 @@ public class RuleEvaluator {
 
         // Measure finalization
         long finalizeStart = System.nanoTime();
-        Decision finalDecision = finalizeDecision(decision, startTime, debugBuilder);
+        Decision finalDecision = finalizeDecision(decision, startNanos, debugBuilder);
         long finalizeEnd = System.nanoTime();
 
         // Update timing breakdown with finalization time
@@ -157,8 +157,9 @@ public class RuleEvaluator {
         monitoringEvaluator.evaluate(context);
     }
 
-    private Decision finalizeDecision(Decision decision, long startTime, DebugInfo.Builder debugBuilder) {
-        long processingTimeMs = System.currentTimeMillis() - startTime;
+    private Decision finalizeDecision(Decision decision, long startTimeNanos, DebugInfo.Builder debugBuilder) {
+        // OPT-10+11: Convert nanos to millis for consistent, high-resolution timing
+        long processingTimeMs = (System.nanoTime() - startTimeNanos) / 1_000_000;
         decision.setProcessingTimeMs(processingTimeMs);
 
         EngineMetadata engineMetadata = new EngineMetadata(

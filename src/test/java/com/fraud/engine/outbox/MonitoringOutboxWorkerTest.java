@@ -80,12 +80,12 @@ class MonitoringOutboxWorkerTest {
 
         Decision monitoringDecision = new Decision("txn-123", RuleEvaluator.EVAL_MONITORING);
         monitoringDecision.setDecision(Decision.DECISION_APPROVE);
-        when(ruleEvaluator.evaluate(any(TransactionContext.class), any(Ruleset.class))).thenReturn(monitoringDecision);
+        when(ruleEvaluator.evaluate(any(TransactionContext.class), any(Ruleset.class), eq(true))).thenReturn(monitoringDecision);
 
         worker.processEntry(entries.get(0));
 
         verify(publisher, times(2)).publishDecisionAwait(any(Decision.class));
-        verify(ruleEvaluator, times(1)).evaluate(any(TransactionContext.class), any(Ruleset.class));
+        verify(ruleEvaluator, times(1)).evaluate(any(TransactionContext.class), any(Ruleset.class), eq(true));
     }
 
     @Test
@@ -114,7 +114,7 @@ class MonitoringOutboxWorkerTest {
         worker.processEntry(entry);
 
         verify(publisher, times(2)).publishDecisionAwait(any(Decision.class));
-        verify(ruleEvaluator, never()).evaluate(any(TransactionContext.class), any(Ruleset.class));
+        verify(ruleEvaluator, never()).evaluate(any(TransactionContext.class), any(Ruleset.class), anyBoolean());
     }
 
     @Test
@@ -134,7 +134,7 @@ class MonitoringOutboxWorkerTest {
         worker.processEntry(entry);
 
         verify(publisher, times(1)).publishDecisionAwait(authDecision);
-        verify(ruleEvaluator, never()).evaluate(any(TransactionContext.class), any(Ruleset.class));
+        verify(ruleEvaluator, never()).evaluate(any(TransactionContext.class), any(Ruleset.class), anyBoolean());
     }
 
     @Test
@@ -159,7 +159,7 @@ class MonitoringOutboxWorkerTest {
 
         verify(mockFacade).ack("3-1");
         verify(publisher, never()).publishDecisionAwait(any());
-        verify(ruleEvaluator, never()).evaluate(any(TransactionContext.class), any(Ruleset.class));
+        verify(ruleEvaluator, never()).evaluate(any(TransactionContext.class), any(Ruleset.class), anyBoolean());
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {

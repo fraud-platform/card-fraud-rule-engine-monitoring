@@ -4,6 +4,207 @@
 **Environment:** Local platform containers (`card-fraud-platform` apps profile)  
 **Status:** In progress. AUTH SLO still not met under current single-container test topology.
 
+## 2026-02-15 Split-Service Production-Mirror Session
+
+This session focused on two questions:
+- Why load-testing cycles feel slow
+- Whether latest AUTH + MONITORING changes improved latency under comparable runs
+
+### A) Time-to-results decomposition (local)
+
+Measured wall-clock contributors:
+
+| Step | Command pattern | Wall time |
+| --- | --- | ---: |
+| Platform start (no rebuild) | `platform-up -- --apps` | `~14.6s` |
+| Platform start (with rebuild) | `platform-up -- --apps --build` | `~65.0s` |
+| Harness seed-only phase | `lt-rule-engine ... --scenario seed-only` | `~8.8s` |
+| Locust-only short run | `30s` run, `--skip-seed --skip-teardown` | `~39.9s` |
+
+Key takeaway:
+- Largest avoidable iteration tax is image rebuild (`--build`).
+- Harness seed/teardown are useful for correctness flows but should be skipped for rapid perf iteration.
+
+### B) Comparable baseline runs (harness, skip-seed/skip-teardown)
+
+Command pattern:
+- `uv run lt-rule-engine --users=50 --spawn-rate=10 --run-time=2m --scenario baseline --headless --skip-seed --skip-teardown`
+- `uv run lt-rule-engine-monitoring --users=50 --spawn-rate=10 --run-time=2m --scenario baseline --headless --skip-seed --skip-teardown`
+
+Results:
+
+| Service | Requests | Failures | Avg (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AUTH | `32,216` | `0` | `92` | `77` | `220` | `320` | `~670` |
+| MONITORING | `31,805` | `0` | `89` | `72` | `210` | `380` | `~1200` |
+
+### C) Fast smoke runs (harness, 30s, skip-seed/skip-teardown)
+
+| Service | Requests | Failures | Avg (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AUTH | `3,988` | `0` | `35` | `19` | `110` | `220` | `2008` |
+| MONITORING | `7,673` | `0` | `22` | `17` | `53` | `99` | `411` |
+
+### D) Production-mirror direct Locust runs (no harness)
+
+All direct runs used:
+- Local platform containers as system under test
+- Direct Locust from this repo (`locustfile-auth-only.py` / `locustfile.py`)
+- `20 users`, `spawn 5/s`, `5m`
+
+#### D1) AUTH initial run (invalid for baseline)
+
+Command:
+- `uv run locust -f locustfile-auth-only.py --host=http://localhost:8081 --headless -u 20 -r 5 --run-time=5m --only-summary`
+
+Result (invalid run):
+- `39,972` requests, `39,972` failures (`100%`)
+- failure type: `FAIL_OPEN: INTERNAL_ERROR`
+
+Root cause:
+- AUTH registry was empty (ruleset not loaded)
+- AUTH loader expected `rulesets/local/CARD_AUTH/v1/ruleset.json` while local MinIO had split path `rulesets/local/US/CARD_AUTH/v1/ruleset.json`
+
+#### D2) AUTH registry fix (local)
+
+Actions taken:
+- Added compatibility object at `rulesets/local/CARD_AUTH/v1/ruleset.json` in MinIO
+- Retried `POST /v1/evaluate/rulesets/load` for `CARD_AUTH v1`
+
+Verification:
+- `rulesets/load` response: success
+- Registry status: `totalRulesets=1`, `global: [CARD_AUTH]`
+
+#### D3) AUTH production-mirror run (valid)
+
+Paced user model:
+- `LOCUST_WAIT_MODE=between`, `LOCUST_MIN_WAIT_MS=20`, `LOCUST_MAX_WAIT_MS=80`
+
+Result:
+- Requests: `48,250`
+- Failures: `0`
+- Avg: `61 ms`
+- p50: `54 ms`
+- p95: `110 ms`
+- p99: `170 ms`
+- Max: `455 ms`
+- RPS: `161.27`
+
+#### D4) MONITORING production-mirror run (valid, paced)
+
+Paced user model:
+- `LOCUST_WAIT_MODE=between`, `LOCUST_MIN_WAIT_MS=20`, `LOCUST_MAX_WAIT_MS=80`
+
+Result:
+- Requests: `54,609`
+- Failures: `0`
+- Avg: `52 ms`
+- p50: `50 ms`
+- p95: `68 ms`
+- p99: `96 ms`
+- Max: `649 ms`
+- RPS: `182.48`
+
+#### D5) MONITORING throughput-pressure run (valid, no wait)
+
+High-throughput user model:
+- `LOCUST_WAIT_MODE=none`
+
+Result:
+- Requests: `78,418`
+- Failures: `0`
+- Avg: `67 ms`
+- p50: `58 ms`
+- p95: `110 ms`
+- p99: `210 ms`
+- Max: `920 ms`
+- RPS: `266.36`
+
+Interpretation:
+- Increasing throughput from `~182 req/s` to `~266 req/s` raised tails (`p95 68 -> 110`, `p99 96 -> 210`).
+- Capacity pressure is a confirmed contributor to latency.
+
+#### D6) Paired rerun (AUTH then MON, paced, 2026-02-15)
+
+Rerun settings:
+- `20 users`, `spawn 5/s`, `5m`
+- `LOCUST_WAIT_MODE=between`, `LOCUST_MIN_WAIT_MS=20`, `LOCUST_MAX_WAIT_MS=80`
+- 30s container sampling collected in parallel with each run
+
+Results:
+
+| Service | Requests | Failures | Avg (ms) | p50 (ms) | p95 (ms) | p99 (ms) | Max (ms) | RPS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AUTH | `72,312` | `0` | `20` | `14` | `55` | `120` | `970` | `242.86` |
+| MONITORING | `72,458` | `0` | `20` | `15` | `54` | `100` | `500` | `242.18` |
+
+Artifacts:
+- `04-testing/auth-locust-2026-02-15-rerun.out.log`
+- `04-testing/auth-container-stats-2026-02-15-rerun.log`
+- `04-testing/mon-locust-2026-02-15-rerun.out.log`
+- `04-testing/mon-container-stats-2026-02-15-rerun.log`
+
+#### D7) Throughput ladder rerun (paced, 2026-02-15)
+
+Purpose:
+- Validate whether higher offered load affects latency tails under the same pacing model.
+
+Run settings:
+- Pacing: `LOCUST_WAIT_MODE=between`, `LOCUST_MIN_WAIT_MS=20`, `LOCUST_MAX_WAIT_MS=80`
+- Durations: `2m` per point
+- Users tested per service: `20`, `35`, `50`
+
+Results:
+
+| Service | Users | Requests | Failures | RPS | Avg (ms) | p50 (ms) | p95 (ms) | p99 (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| AUTH | `20` | `28,839` | `0` | `246.41` | `19.44` | `16` | `45` | `80` |
+| AUTH | `35` | `35,499` | `0` | `300.23` | `33.65` | `29` | `68` | `100` |
+| AUTH | `50` | `34,616` | `0` | `292.84` | `57.60` | `50` | `120` | `160` |
+| MONITORING | `20` | `30,192` | `0` | `254.69` | `18.13` | `14` | `41` | `74` |
+| MONITORING | `35` | `31,485` | `0` | `261.47` | `42.63` | `34` | `91` | `170` |
+| MONITORING | `50` | `27,767` | `0` | `235.75` | `76.97` | `42` | `190` | `870` |
+
+Interpretation:
+- Both services show clear latency growth as concurrent users increase.
+- MONITORING tails degrade most sharply (`p99 74 -> 170 -> 870`) across `20 -> 35 -> 50` users.
+- AUTH also degrades (`p95 45 -> 68 -> 120`, `p99 80 -> 100 -> 160`) as load rises.
+
+Knee-point snapshot (from paced ladder):
+
+| Service | Knee zone | Why |
+| --- | --- | --- |
+| AUTH | `35 -> 50 users` | `p95` jumps `68 -> 120` and `p50` jumps `29 -> 50` while RPS does not increase (`300.23 -> 292.84`). |
+| MONITORING | `20 -> 35 users` (onset), severe at `50` | `p95` more than doubles `41 -> 91` by `35`; at `50`, tails surge (`p99 870`) with lower RPS (`261.47 -> 235.75`). |
+
+Compact trend chart:
+
+| Service | Users=20 | Users=35 | Users=50 |
+| --- | --- | --- | --- |
+| AUTH p95/p99 (ms) | `45 / 80` | `68 / 100` | `120 / 160` |
+| MON p95/p99 (ms) | `41 / 74` | `91 / 170` | `190 / 870` |
+
+Artifacts:
+- `04-testing/auth-step-2026-02-15-u20_stats.csv`
+- `04-testing/auth-step-2026-02-15-u35_stats.csv`
+- `04-testing/auth-step-2026-02-15-u50_stats.csv`
+- `04-testing/mon-step-2026-02-15-u20_stats.csv`
+- `04-testing/mon-step-2026-02-15-u35_stats.csv`
+- `04-testing/mon-step-2026-02-15-u50_stats.csv`
+
+### E) Container capacity observations (sampled during runs)
+
+- AUTH rerun sample summary (`10` samples):
+  - CPU avg `46.04%`, CPU max `64.49%`
+  - Memory avg `59.87%`, memory max `60.04%`
+- MONITORING rerun sample summary (`10` samples):
+  - CPU avg `55.80%`, CPU max `192.53%` (short burst)
+  - Memory avg `60.19%`, memory max `61.43%`
+
+Operational interpretation:
+- Memory was stable and below limit in these runs.
+- CPU pressure (and shared local host/container overhead) is the more likely floor for tail latency in this setup.
+
 ## 2026-02-10 Baseline Snapshot (Reference)
 
 - Baseline command:

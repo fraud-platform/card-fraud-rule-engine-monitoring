@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 /**
  * Represents a condition that can be evaluated against a transaction.
@@ -35,6 +36,9 @@ public class Condition {
 
     @JsonProperty("values")
     private Object values;
+
+    // OPT-15: Cached Pattern for regex conditions
+    private transient Pattern compiledPattern;
 
     public Condition() {
     }
@@ -247,8 +251,13 @@ public class Condition {
         if (list == null) {
             return false;
         }
-        return list.stream()
-                .anyMatch(item -> Objects.equals(contextValue, item));
+        // OPT-06: Direct iteration instead of stream - no Spliterator/lambda allocation
+        for (Object item : list) {
+            if (Objects.equals(contextValue, item)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isBetween(Object contextValue) {
@@ -276,7 +285,8 @@ public class Condition {
             return false;
         }
         if (contextValue instanceof java.util.List<?> list) {
-            return list.stream().anyMatch(item -> Objects.equals(item, value));
+            // OPT-06: Direct iteration instead of stream
+            return list.contains(value);
         }
         if (contextValue instanceof String stringValue) {
             return stringValue.contains(String.valueOf(value));
@@ -301,7 +311,11 @@ public class Condition {
     private boolean matchesRegex(Object contextValue) {
         if (contextValue instanceof String stringValue && value != null) {
             try {
-                return stringValue.matches(String.valueOf(value));
+                // OPT-15: Cache compiled Pattern instead of recompiling on every call
+                if (compiledPattern == null) {
+                    compiledPattern = Pattern.compile(String.valueOf(value));
+                }
+                return compiledPattern.matcher(stringValue).matches();
             } catch (Exception e) {
                 return false;
             }

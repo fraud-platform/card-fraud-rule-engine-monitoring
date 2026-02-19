@@ -12,7 +12,7 @@ quarkus:
     limits:
       max-body-size: 1M
     # IO thread pool for request handling
-    io-threads: ${HTTP_IO_THREADS:32}  # Increased from default 8*cores
+    io-threads: ${HTTP_IO_THREADS:8}  # 2x local container cores (4 CPU limit)
 
   # Thread pool configuration for blocking operations
   thread-pool:
@@ -25,10 +25,11 @@ quarkus:
   # Redis Configuration (via environment - Doppler)
   redis:
     hosts: ${REDIS_URL:redis://localhost:6379}
-    # Connection pool tuning (morning test: 20/100 achieved P50=83ms)
-    # Default: maxPoolSize=6, maxWaitingHandlers=2048
-    max-pool-size: ${REDIS_MAX_POOL_SIZE:20}  # Morning baseline value
-    max-waiting-handlers: ${REDIS_MAX_WAITING_HANDLERS:100}  # Morning baseline value
+    # Connection pool tuning
+    # Previous: 20/100 achieved P50=83ms (too small for 100 concurrent requests)
+    # Target: 64/512 eliminates Redis connection queuing under load-shedding limit
+    max-pool-size: ${REDIS_MAX_POOL_SIZE:64}
+    max-waiting-handlers: ${REDIS_MAX_WAITING_HANDLERS:512}
     # Connection timeout (milliseconds)
     timeout: ${REDIS_TIMEOUT:5s}
 

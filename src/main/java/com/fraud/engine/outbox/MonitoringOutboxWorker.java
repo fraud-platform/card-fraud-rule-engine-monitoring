@@ -112,7 +112,9 @@ public class MonitoringOutboxWorker {
 
         try {
             // Capture velocity snapshot on worker thread (ADR-0017)
-            captureVelocitySnapshot(tx, authDecision);
+            if (authDecision.getVelocitySnapshot() == null || authDecision.getVelocitySnapshot().isEmpty()) {
+                captureVelocitySnapshot(tx, authDecision);
+            }
 
             // Populate transactionContext for Kafka event (moved from AUTH hot path to background worker)
             if (authDecision.getTransactionContext() == null) {
@@ -128,8 +130,9 @@ public class MonitoringOutboxWorker {
             String country = tx.getCountryCode();
             Ruleset ruleset = rulesetRegistry.getRulesetWithFallback(country, rulesetKey);
             Decision monitoringDecision = ruleset != null
-                    ? ruleEvaluator.evaluate(tx, ruleset)
+                    ? ruleEvaluator.evaluate(tx, ruleset, true)
                     : buildFailOpenDecision(tx, rulesetKey);
+            normalizeOutboxEngineMode(monitoringDecision);
 
             // Share velocity snapshot with MONITORING decision
             if (authDecision.getVelocitySnapshot() != null) {
@@ -163,5 +166,19 @@ public class MonitoringOutboxWorker {
         decision.setRulesetKey(rulesetKey);
         decision.setTransactionContext(tx.toEvaluationContext());
         return decision;
+    }
+
+    /**
+     * Outbox processing uses replay-style evaluation to avoid velocity side effects,
+     * but emitted production decision events should keep engine-mode semantics.
+     */
+    private void normalizeOutboxEngineMode(Decision decision) {
+        if (!Decision.MODE_REPLAY.equals(decision.getEngineMode())) {
+            return;
+        }
+        decision.setEngineMode(Decision.MODE_NORMAL);
+        if (decision.getEngineMetadata() != null) {
+            decision.getEngineMetadata().setEngineMode(Decision.MODE_NORMAL);
+        }
     }
 }

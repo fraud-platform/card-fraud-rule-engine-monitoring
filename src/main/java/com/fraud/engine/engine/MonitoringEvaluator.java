@@ -12,8 +12,10 @@ import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 @ApplicationScoped
 public class MonitoringEvaluator {
@@ -26,17 +28,28 @@ public class MonitoringEvaluator {
     @Inject
     EvaluationConfig evaluationConfig;
 
+    private record PendingMatchedRule(Rule rule, Decision.MatchedRule matchedRule, boolean requiresVelocity) {}
+
     public void evaluate(EvaluationContext context) {
-        Map<String, Object> evalContext = context.evalContext() != null
-                ? context.evalContext()
-                : context.transaction().toEvaluationContext();
         List<Rule> rules = context.getRulesToEvaluate();
+        // OPT-09: Use array holder instead of AtomicReference for single-threaded lazy init
+        Map<String, Object>[] evalContextHolder = new Map[1];
+        Supplier<Map<String, Object>> evalContextSupplier = () -> {
+            if (evalContextHolder[0] == null) {
+                evalContextHolder[0] = context.evalContext() != null
+                        ? context.evalContext()
+                        : context.transaction().toEvaluationContext();
+            }
+            return evalContextHolder[0];
+        };
 
         if (LOG.isDebugEnabled()) {
             LOG.debugf("MONITORING evaluation: %d rules to evaluate", rules.size());
         }
 
-        List<Decision.MatchedRule> matchedRules = new ArrayList<>();
+        List<PendingMatchedRule> pendingMatchedRules = new ArrayList<>();
+        List<Rule> pendingVelocityRules = new ArrayList<>();
+        Map<String, Decision.VelocityResult> replayVelocityCache = context.replayMode() ? new HashMap<>() : null;
 
         for (Rule rule : rules) {
             if (!rule.isEnabled()) {
@@ -47,9 +60,9 @@ public class MonitoringEvaluator {
                 LOG.debugf("Evaluating rule: %s (%s)", rule.getId(), rule.getName());
             }
 
-            boolean ruleMatched = evaluateRule(rule, context.transaction(), evalContext);
+            boolean ruleMatched = evaluateRule(rule, context.transaction(), evalContextSupplier);
             if (context.isDebugEnabled()) {
-                trackConditionEvaluations(rule, context.transaction(), evalContext, ruleMatched, context.debugBuilder());
+                trackConditionEvaluations(rule, context.transaction(), evalContextSupplier.get(), ruleMatched, context.debugBuilder());
             }
 
             if (!ruleMatched) {
@@ -57,22 +70,10 @@ public class MonitoringEvaluator {
             }
 
             if (rule.getVelocity() != null) {
-                Decision.VelocityResult velocityResult;
-                if (context.replayMode()) {
-                    velocityResult = velocityEvaluator.checkVelocityReadOnly(
-                            context.transaction(), rule, context.decision());
-                } else {
-                    velocityResult = velocityEvaluator.checkVelocity(
-                            context.transaction(), rule, context.decision());
-                }
-                context.decision().addVelocityResult(rule.getId(), velocityResult);
-
-                if (velocityResult.isExceeded()) {
-                    Decision.MatchedRule matchedRule = createMatchedRule(rule);
-                    matchedRule.setAction(rule.getVelocity().getAction());
-                    matchedRules.add(matchedRule);
-                    continue;
-                }
+                Decision.MatchedRule matchedRule = createMatchedRule(rule);
+                pendingVelocityRules.add(rule);
+                pendingMatchedRules.add(new PendingMatchedRule(rule, matchedRule, true));
+                continue;
             }
 
             if (LOG.isDebugEnabled()) {
@@ -81,11 +82,46 @@ public class MonitoringEvaluator {
             }
 
             Decision.MatchedRule matchedRule = createMatchedRule(rule);
+            pendingMatchedRules.add(new PendingMatchedRule(rule, matchedRule, false));
+        }
+
+        // Batch velocity checks (big lever): turn N Redis RTTs into 1.
+        Decision.VelocityResult[] velocityResults = new Decision.VelocityResult[0];
+        if (!pendingVelocityRules.isEmpty() && !context.replayMode()) {
+            velocityResults = velocityEvaluator.checkVelocityBatch(
+                    context.transaction(),
+                    pendingVelocityRules,
+                    context.decision()
+            );
+        }
+
+        List<Decision.MatchedRule> matchedRules = new ArrayList<>(pendingMatchedRules.size());
+        int velocityIndex = 0;
+        for (PendingMatchedRule pending : pendingMatchedRules) {
+            Rule rule = pending.rule();
+            Decision.MatchedRule matchedRule = pending.matchedRule();
+
+            if (pending.requiresVelocity()) {
+                Decision.VelocityResult velocityResult;
+                if (context.replayMode()) {
+                    velocityResult = velocityEvaluator.checkVelocityReadOnly(
+                            context.transaction(), rule, context.decision(), replayVelocityCache);
+                } else {
+                    velocityResult = velocityResults[velocityIndex];
+                }
+                velocityIndex++;
+
+                context.decision().addVelocityResult(rule.getId(), velocityResult);
+                if (velocityResult.isExceeded()) {
+                    matchedRule.setAction(rule.getVelocity().getAction());
+                }
+            }
+
             matchedRules.add(matchedRule);
         }
 
         context.decision().setMatchedRules(matchedRules);
-        applyMonitoringDecision(context, evalContext);
+        applyMonitoringDecision(context);
 
         if (LOG.isDebugEnabled()) {
             LOG.debugf("MONITORING evaluation complete: %d matched, decision: %s",
@@ -93,10 +129,11 @@ public class MonitoringEvaluator {
         }
     }
 
-    private boolean evaluateRule(Rule rule, TransactionContext transaction, Map<String, Object> context) {
+    private boolean evaluateRule(Rule rule, TransactionContext transaction, Supplier<Map<String, Object>> contextSupplier) {
         if (rule.getCompiledCondition() != null) {
             return rule.getCompiledCondition().matches(transaction);
         }
+        Map<String, Object> context = contextSupplier.get();
         if (rule.getConditions() != null) {
             for (Condition condition : rule.getConditions()) {
                 if (!condition.evaluate(context)) {
@@ -107,7 +144,7 @@ public class MonitoringEvaluator {
         return true;
     }
 
-    private void applyMonitoringDecision(EvaluationContext context, Map<String, Object> evalContext) {
+    private void applyMonitoringDecision(EvaluationContext context) {
         String providedDecision = context.transaction().getDecision();
         String normalized = DecisionNormalizer.normalizeDecisionValue(providedDecision);
         if (Decision.DECISION_APPROVE.equals(normalized) || Decision.DECISION_DECLINE.equals(normalized)) {

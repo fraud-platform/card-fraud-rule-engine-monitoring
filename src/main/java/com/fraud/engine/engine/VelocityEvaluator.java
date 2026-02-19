@@ -9,6 +9,10 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import org.jboss.logging.Logger;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
 @ApplicationScoped
 public class VelocityEvaluator {
 
@@ -16,6 +20,30 @@ public class VelocityEvaluator {
 
     @Inject
     VelocityService velocityService;
+
+    public Decision.VelocityResult[] checkVelocityBatch(
+            TransactionContext transaction,
+            List<Rule> rules,
+            Decision decision) {
+        if (rules == null || rules.isEmpty()) {
+            return new Decision.VelocityResult[0];
+        }
+        try {
+            List<com.fraud.engine.domain.VelocityConfig> configs = new ArrayList<>(rules.size());
+            for (Rule rule : rules) {
+                configs.add(rule.getVelocity());
+            }
+            return velocityService.checkVelocityBatch(transaction, configs);
+        } catch (Exception e) {
+            LOG.warnf(e, "Velocity batch check failed, skipping");
+            markVelocityDegraded(decision, e);
+            Decision.VelocityResult[] safe = new Decision.VelocityResult[rules.size()];
+            for (int i = 0; i < rules.size(); i++) {
+                safe[i] = safeVelocityResult(rules.get(i).getVelocity());
+            }
+            return safe;
+        }
+    }
 
     public Decision.VelocityResult checkVelocity(
             TransactionContext transaction,
@@ -33,19 +61,31 @@ public class VelocityEvaluator {
     public Decision.VelocityResult checkVelocityReadOnly(
             TransactionContext transaction,
             Rule rule,
-            Decision decision) {
+            Decision decision,
+            Map<String, Decision.VelocityResult> cache) {
         try {
             String key = velocityService.buildVelocityKey(transaction, rule.getVelocity());
+            String cacheKey = key + "|" + rule.getVelocity().getThreshold() + "|" + rule.getVelocity().getWindowSeconds();
+            if (cache != null) {
+                Decision.VelocityResult cached = cache.get(cacheKey);
+                if (cached != null) {
+                    return cached;
+                }
+            }
             long currentCount = velocityService.getCurrentCount(key);
             String dimensionValue = extractDimensionValue(transaction, rule.getVelocity().getDimension());
 
-            return new Decision.VelocityResult(
+            Decision.VelocityResult result = new Decision.VelocityResult(
                     rule.getVelocity().getDimension(),
                     dimensionValue,
                     currentCount,
                     rule.getVelocity().getThreshold(),
                     rule.getVelocity().getWindowSeconds()
             );
+            if (cache != null) {
+                cache.put(cacheKey, result);
+            }
+            return result;
         } catch (Exception e) {
             LOG.warnf(e, "Velocity read check failed for rule %s", rule.getId());
             markVelocityDegraded(decision, e);

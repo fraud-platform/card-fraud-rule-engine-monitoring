@@ -227,12 +227,13 @@ public class Ruleset {
                 }
                 switch (scope.getType()) {
                     case NETWORK -> {
+                        // OPT-16: Add Locale.ROOT to toUpperCase calls
                         if (scope.getValue() != null) {
-                            networkBuckets.computeIfAbsent(scope.getValue().toUpperCase(), k -> new ArrayList<>()).add(rule);
+                            networkBuckets.computeIfAbsent(scope.getValue().toUpperCase(java.util.Locale.ROOT), k -> new ArrayList<>()).add(rule);
                         }
                         if (scope.getValues() != null) {
                             for (String val : scope.getValues()) {
-                                networkBuckets.computeIfAbsent(val.toUpperCase(), k -> new ArrayList<>()).add(rule);
+                                networkBuckets.computeIfAbsent(val.toUpperCase(java.util.Locale.ROOT), k -> new ArrayList<>()).add(rule);
                             }
                         }
                     }
@@ -257,12 +258,13 @@ public class Ruleset {
                         }
                     }
                     case LOGO -> {
+                        // OPT-16: Add Locale.ROOT to toUpperCase calls
                         if (scope.getValue() != null) {
-                            logoBuckets.computeIfAbsent(scope.getValue().toUpperCase(), k -> new ArrayList<>()).add(rule);
+                            logoBuckets.computeIfAbsent(scope.getValue().toUpperCase(java.util.Locale.ROOT), k -> new ArrayList<>()).add(rule);
                         }
                         if (scope.getValues() != null) {
                             for (String val : scope.getValues()) {
-                                logoBuckets.computeIfAbsent(val.toUpperCase(), k -> new ArrayList<>()).add(rule);
+                                logoBuckets.computeIfAbsent(val.toUpperCase(java.util.Locale.ROOT), k -> new ArrayList<>()).add(rule);
                             }
                         }
                     }
@@ -299,8 +301,9 @@ public class Ruleset {
     public List<Rule> getApplicableRules(String network, String bin, String mcc, String logo) {
         buildScopeBuckets();
 
-        String normalizedNetwork = network != null ? network.toUpperCase() : null;
-        String normalizedLogo = logo != null ? logo.toUpperCase() : null;
+        // OPT-16: Add Locale.ROOT to toUpperCase calls
+        String normalizedNetwork = network != null ? network.toUpperCase(java.util.Locale.ROOT) : null;
+        String normalizedLogo = logo != null ? logo.toUpperCase(java.util.Locale.ROOT) : null;
         ScopeCacheKey cacheKey = new ScopeCacheKey(normalizedNetwork, bin, mcc, normalizedLogo);
 
         ConcurrentHashMap<ScopeCacheKey, List<Rule>> cache = applicableRulesCache;
@@ -314,8 +317,11 @@ public class Ruleset {
         List<Rule> computed = computeApplicableRules(normalizedNetwork, bin, mcc, normalizedLogo);
 
         if (cache != null) {
+            // OPT-07: Atomic swap instead of clear() to prevent thundering herd
             if (cache.size() >= APPLICABLE_RULE_CACHE_MAX_ENTRIES) {
-                cache.clear();
+                // Swap to a fresh map - only one thread performs the swap
+                applicableRulesCache = new ConcurrentHashMap<>(256);
+                cache = applicableRulesCache;
             }
             List<Rule> previous = cache.putIfAbsent(cacheKey, computed);
             if (previous != null) {

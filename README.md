@@ -10,7 +10,7 @@ Stateless Quarkus runtime for card fraud MONITORING/analytics decisioning (split
 ## Quick Start
 
 Prerequisites:
-- Java 21+ (Java 25 supported)
+- Java 25+
 - Maven 3.9+
 - Python 3.11+
 - `uv`
@@ -21,9 +21,8 @@ Prerequisites:
 # 1) Install deps
 uv sync
 
-# 2) Bring up local infra (or use card-fraud-platform)
-uv run infra-local-up
-uv run redis-local-verify
+# 2) Run repeatable preflight (Doppler + platform + Redis verify)
+uv run preflight
 
 # 3) Start service with Doppler secrets
 uv run doppler-local
@@ -63,6 +62,7 @@ Reference: `docs/06-operations/slos.md`
 ## Test Commands
 
 ```bash
+uv run preflight
 uv run test-unit
 uv run test-smoke
 uv run test-integration

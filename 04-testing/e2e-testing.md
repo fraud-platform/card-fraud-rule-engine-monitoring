@@ -2,7 +2,7 @@
 
 **Purpose:** Guide for running E2E and load tests using the shared `card-fraud-e2e-load-testing` repository.
 
-**Last Updated:** 2026-02-02
+**Last Updated:** 2026-02-15
 
 ---
 
@@ -11,6 +11,8 @@
 The Card Fraud Rule Engine uses the centralized **card-fraud-e2e-load-testing** repository for all E2E and load testing. This avoids duplication and ensures consistency across all card fraud detection services.
 
 **Repository:** sibling repo `../card-fraud-e2e-load-testing`
+
+This repository provides the service under test (MONITORING). AUTH load tests target the sibling AUTH service.
 
 ### Key Features
 
@@ -53,6 +55,46 @@ uv run lt-rule-engine --users=1000 --spawn-rate=100 --run-time=5m
 
 # With authentication modes
 ```
+
+Notes:
+- For split services, prefer explicit targeting via env vars (see Configuration below).
+- For acceptance-quality numbers, run the service in a production-like container (OpenShift pods or Docker Compose). Avoid Quarkus dev-mode as a performance signal.
+
+---
+
+## Blessed Commands (Local Baseline)
+
+These are the “known-good” commands for a local, production-like baseline (containers run the packaged artifact; load is generated externally from your host).
+
+1. Start the platform apps (packaged container runtime):
+
+```bash
+cd ../card-fraud-platform
+doppler run -- uv run platform-up -- --apps --build --force-recreate
+```
+
+2. Run AUTH baseline (50 users, 2m):
+
+```bash
+cd ../card-fraud-e2e-load-testing
+export RULE_ENGINE_AUTH_URL="http://localhost:8081"
+export RULE_ENGINE_MONITORING_URL="http://localhost:8082"
+
+uv run lt-rule-engine --users=50 --spawn-rate=10 --run-time=2m --scenario baseline --headless
+```
+
+3. Run MONITORING baseline (50 users, 2m):
+
+```bash
+cd ../card-fraud-e2e-load-testing
+export RULE_ENGINE_AUTH_URL="http://localhost:8081"
+export RULE_ENGINE_MONITORING_URL="http://localhost:8082"
+
+uv run lt-rule-engine-monitoring --users=50 --spawn-rate=10 --run-time=2m --scenario baseline --headless
+```
+
+Notes:
+- Seed uploads rulesets to object storage, validates the uploaded keys are visible, then bulk-loads into the target registry.
 
 ---
 
@@ -102,13 +144,10 @@ uv run lt-rule-engine --users=5000 --spawn-rate=1000 --run-time=5m --scenario=sp
 
 ## Target Metrics
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| **Requests Per Second** | 10,000+ | Locust metrics |
-| **P50 Latency** | < 5ms | Locust metrics |
-| **P95 Latency** | < 15ms | Locust metrics |
-| **P99 Latency** | < 30ms | Locust metrics |
-| **Error Rate** | < 0.1% | Locust metrics |
+Service-level targets are defined in the SLO docs and may differ by endpoint/profile.
+
+- Monitoring SLO reference: `docs/06-operations/slos.md`
+- Baseline tracking: `04-testing/load-testing-baseline.md`
 
 ---
 
@@ -117,8 +156,14 @@ uv run lt-rule-engine --users=5000 --spawn-rate=1000 --run-time=5m --scenario=sp
 ### Environment Variables
 
 ```bash
-# Required - Rule Engine URL
-export RULE_ENGINE_URL="http://localhost:8081"
+# Split-service targeting (preferred)
+export RULE_ENGINE_AUTH_URL="http://localhost:8081"
+export RULE_ENGINE_MONITORING_URL="http://localhost:8082"
+
+# Select which service the Locust user targets
+# - "auth" (default)
+# - "monitoring"
+export RULE_ENGINE_MODE="monitoring"
 
 
 # Optional - MinIO for artifact publishing
@@ -127,14 +172,18 @@ export MINIO_ACCESS_KEY="minioadmin"
 export MINIO_SECRET_KEY="minioadmin"
 ```
 
+Notes:
+- Seeding uploads rulesets to object storage and then bulk-loads them into the target service registry so the load test hits the hot path.
+- If you run AUTH-only tests, set `RULE_ENGINE_MODE=auth` (or leave unset) and `RULE_ENGINE_AUTH_URL` appropriately.
+
 ### Test Configuration
 
-The test configuration is centralized in `card-fraud-e2e-load-testing/src/config/defaults.py`:
+The test configuration is centralized in `card-fraud-e2e-load-testing`:
 
 ```python
 RuleEngineConfig:
-    # Target service
-    base_url: ${RULE_ENGINE_URL}
+  # Target service
+  # (selected by RULE_ENGINE_MODE and the *_URL env vars)
 
     # Load test parameters
     target_rps: 10000

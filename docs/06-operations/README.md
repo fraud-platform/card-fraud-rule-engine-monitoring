@@ -10,6 +10,7 @@ Runbooks, observability, troubleshooting, and security operations.
 - `elevated-fail-open-rate.md`
 - `manifest-query-failure.md`
 - `multi-region-strategy.md`
+- `repeatable-workflow-checklist.md`
 - `redis-outage.md`
 - `redis-velocity-and-replay.md`
 - `ruleset-reload-loop.md`

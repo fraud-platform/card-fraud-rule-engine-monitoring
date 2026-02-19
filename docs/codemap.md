@@ -37,3 +37,7 @@ Reference: `docs/06-operations/slos.md`.
 
 - Standalone mode: run this repository with its own local commands and Doppler config.
 - Consolidated mode: run via `card-fraud-platform` for cross-service local validation.
+
+## Repeatable Session Runbook
+
+- `docs/06-operations/repeatable-workflow-checklist.md` is the default start-to-finish execution order for preflight, quality gates, and load tests.

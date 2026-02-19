@@ -10,9 +10,20 @@ import os
 import random
 import uuid
 
-from locust import HttpUser, constant, events, task
+from locust import HttpUser, between, constant, events, task
 
 TARGET_HOST = os.environ.get("TARGET_HOST", "http://localhost:8082")
+wait_mode = os.environ.get("LOCUST_WAIT_MODE", "none").lower()
+min_wait_ms = int(os.environ.get("LOCUST_MIN_WAIT_MS", "0"))
+max_wait_ms = int(os.environ.get("LOCUST_MAX_WAIT_MS", str(min_wait_ms)))
+
+if max_wait_ms < min_wait_ms:
+    max_wait_ms = min_wait_ms
+
+if wait_mode == "between":
+    wait_time_fn = between(min_wait_ms / 1000.0, max_wait_ms / 1000.0)
+else:
+    wait_time_fn = constant(0)
 
 CURRENCIES = ["USD", "GBP", "EUR", "CAD", "AUD", "JPY"]
 COUNTRIES = ["US"]
@@ -38,7 +49,7 @@ def generate_monitoring_request() -> dict:
 
 
 class MonitoringUser(HttpUser):
-    wait_time = constant(0)
+    wait_time = wait_time_fn
 
     def on_start(self):
         self.headers = {"Content-Type": "application/json"}
@@ -77,6 +88,7 @@ def on_test_start(environment, **kwargs):
     print("Card Fraud Monitoring Load Test")
     print(f"  Target: {environment.host}")
     print("  Workload: 100% /v1/evaluate/monitoring")
+    print(f"  Wait mode: {wait_mode} ({min_wait_ms}ms to {max_wait_ms}ms)")
     print("=" * 60)
 
     print("  Ruleset load step: skipped (uses startup preloaded registry)")

@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
  * - Downstream processing (transaction-management)
  * - Analytics and reporting
  *
- * <p>Events match the DecisionEventCreate schema from transaction-management.
+ * <p>Events match DecisionEventCreate schema from transaction-management.
  */
 @ApplicationScoped
 public class DecisionPublisher {
@@ -47,7 +47,8 @@ public class DecisionPublisher {
     @ConfigProperty(name = "mp.messaging.outgoing.decision-events.topic", defaultValue = "fraud.card.decisions.v1")
     String topicName;
 
-    @ConfigProperty(name = "app.decision.publisher.async-threads", defaultValue = "4")
+    // OPT-14: Increase default async threads from 4 to 8
+    @ConfigProperty(name = "app.decision.publisher.async-threads", defaultValue = "8")
     int asyncThreads;
 
     private ExecutorService asyncPublisherPool;
@@ -83,7 +84,7 @@ public class DecisionPublisher {
     /**
      * Publishes a decision event to Kafka.
      *
-     * @param decision the decision to publish
+     * @param decision decision to publish
      */
     public void publishDecision(Decision decision) {
         try {
@@ -116,7 +117,7 @@ public class DecisionPublisher {
     /**
      * Publishes a decision event synchronously (blocking).
      *
-     * @param decision the decision to publish
+     * @param decision decision to publish
      */
     public void publishDecisionSync(Decision decision) {
         publishDecisionAwait(decision);
@@ -152,10 +153,10 @@ public class DecisionPublisher {
 
     /**
      * Publishes a decision event to Kafka asynchronously (fire-and-forget).
-     * Does not block the caller - matches the AUTH outbox pattern for performance.
+     * Does not block caller - matches AUTH outbox pattern for performance.
      * Errors are logged but do not fail the request.
      *
-     * @param decision the decision to publish
+     * @param decision decision to publish
      */
     public void publishDecisionAsync(Decision decision) {
         try {
@@ -167,18 +168,21 @@ public class DecisionPublisher {
 
     /**
      * Converts a Decision to a DecisionEventCreate for Kafka publishing.
-     * Matches the transaction-management DecisionEventCreate schema.
+     * Matches transaction-management DecisionEventCreate schema.
      *
-     * @param decision the decision object
-     * @return the event for publishing
+     * @param decision decision object
+     * @return event for publishing
      */
     private DecisionEventCreate toDecisionEventCreate(Decision decision) {
+        // OPT-12: Capture timestamp once and reuse it
+        String now = Instant.now().toString();
+
         DecisionEventCreate event = new DecisionEventCreate();
 
         // Required fields
         event.setTransactionId(decision.getTransactionId());
-        event.setOccurredAt(decision.getTimestamp() != null ? decision.getTimestamp().toString() : Instant.now().toString());
-        event.setProducedAt(Instant.now().toString());
+        event.setOccurredAt(decision.getTimestamp() != null ? decision.getTimestamp().toString() : now);
+        event.setProducedAt(now);
         event.setDecision(decision.getDecision());
         event.setDecisionReason(determineDecisionReason(decision));
         event.setEvaluationType(decision.getEvaluationType());
@@ -193,7 +197,7 @@ public class DecisionPublisher {
 
         // Matched rules
         if (decision.getMatchedRules() != null && !decision.getMatchedRules().isEmpty()) {
-            event.setMatchedRules(buildRuleMatches(decision));
+            event.setMatchedRules(buildRuleMatches(decision, now));
         }
 
         // Risk level (could be calculated based on rules matched)
@@ -217,8 +221,8 @@ public class DecisionPublisher {
     }
 
     /**
-     * Builds the TransactionDetails object from the transaction context.
-     * Extracts only the fields needed by transaction-management.
+     * Builds TransactionDetails object from transaction context.
+     * Extracts only fields needed by transaction-management.
      */
     private DecisionEventCreate.TransactionDetails buildTransactionDetails(Decision decision) {
         DecisionEventCreate.TransactionDetails details = new DecisionEventCreate.TransactionDetails();
@@ -250,18 +254,20 @@ public class DecisionPublisher {
     }
 
     /**
-     * Builds the list of RuleMatch objects from the decision's matched rules.
+     * Builds a list of RuleMatch objects from decision's matched rules.
+     * OPT-12: Accepts pre-captured timestamp to avoid repeated Instant.now() calls.
      */
-    private List<DecisionEventCreate.RuleMatch> buildRuleMatches(Decision decision) {
+    private List<DecisionEventCreate.RuleMatch> buildRuleMatches(Decision decision, String matchedAt) {
         return decision.getMatchedRules().stream()
-                .map(this::toRuleMatch)
+                .map(m -> toRuleMatch(m, matchedAt))
                 .collect(Collectors.toList());
     }
 
     /**
      * Converts a Decision.MatchedRule to a DecisionEventCreate.RuleMatch.
+     * OPT-12: Accepts pre-captured timestamp to avoid repeated Instant.now() calls.
      */
-    private DecisionEventCreate.RuleMatch toRuleMatch(Decision.MatchedRule matched) {
+    private DecisionEventCreate.RuleMatch toRuleMatch(Decision.MatchedRule matched, String matchedAt) {
         DecisionEventCreate.RuleMatch ruleMatch = new DecisionEventCreate.RuleMatch();
 
         ruleMatch.setRuleId(matched.getRuleId());
@@ -272,7 +278,7 @@ public class DecisionPublisher {
         ruleMatch.setRuleAction(matched.getAction());
         ruleMatch.setConditionsMet(matched.getConditionsMet());
         ruleMatch.setConditionValues(matched.getConditionValues());
-        ruleMatch.setMatchedAt(Instant.now().toString());
+        ruleMatch.setMatchedAt(matchedAt);
         ruleMatch.setMatchReasonText(buildMatchReasonText(matched));
 
         return ruleMatch;
@@ -293,7 +299,7 @@ public class DecisionPublisher {
     }
 
     /**
-     * Converts the engine metadata from Decision to DecisionEventCreate format.
+     * Converts engine metadata from Decision to DecisionEventCreate format.
      */
     private DecisionEventCreate.EngineMetadata buildEngineMetadata(Decision decision) {
         DecisionEventCreate.EngineMetadata metadata = new DecisionEventCreate.EngineMetadata();
@@ -317,7 +323,7 @@ public class DecisionPublisher {
     }
 
     /**
-     * Determines the decision reason based on the decision state.
+     * Determines a decision reason based on the decision state.
      */
     private String determineDecisionReason(Decision decision) {
         // If there are velocity results that exceeded, it's a velocity match
@@ -344,7 +350,7 @@ public class DecisionPublisher {
     }
 
     /**
-     * Determines the risk level based on the decision.
+     * Determines risk level based on the decision.
      */
     private String determineRiskLevel(Decision decision) {
         return switch (decision.getDecision()) {
